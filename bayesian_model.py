@@ -57,11 +57,15 @@ kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
 # Storage for results
 cv_results = {
     'fold': [],
-    'r2_score': [],
-    'rmse': [],
+    'in_sample_r2': [],
+    'in_sample_rmse': [],
+    'out_sample_r2': [],
+    'out_sample_rmse': [],
     'trace': [],
-    'y_true': [],
-    'y_pred': []
+    'y_train': [],
+    'y_test': [],
+    'y_pred_train': [],
+    'y_pred_test': []
 }
 
 print(f"Starting {n_folds}-fold cross-validation...")
@@ -105,62 +109,89 @@ for fold_idx, (train_idx, test_idx) in enumerate(kf.split(X)):
             progressbar=False  # Reduce output clutter
         )
     
-    # Make predictions on test set
-    with hierarchical_model:
-        # Use posterior samples to predict on test set
-        pm.set_data({"X_train": X_test})  # This might need adjustment based on your PyMC version
-        
-        # Alternative approach: manually calculate predictions
-        alpha_samples = trace.posterior["alpha"].values.flatten()
-        beta_samples = trace.posterior["beta"].values.reshape(-1, X_train.shape[1])
-        
-        # Calculate predictions for test set
-        y_pred_samples = []
-        for i in range(len(alpha_samples)):
-            pred = alpha_samples[i] + np.dot(X_test, beta_samples[i])
-            y_pred_samples.append(pred)
-        
-        y_pred_samples = np.array(y_pred_samples)
-        y_pred = np.mean(y_pred_samples, axis=0)
+    # Get posterior samples for predictions
+    alpha_samples = trace.posterior["alpha"].values.flatten()
+    beta_samples = trace.posterior["beta"].values.reshape(-1, X_train.shape[1])
     
-    # Calculate metrics
-    r2 = r2_score(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    # Calculate IN-SAMPLE predictions (training set)
+    y_pred_train_samples = []
+    for i in range(len(alpha_samples)):
+        pred_train = alpha_samples[i] + np.dot(X_train, beta_samples[i])
+        y_pred_train_samples.append(pred_train)
+    
+    y_pred_train_samples = np.array(y_pred_train_samples)
+    y_pred_train = np.mean(y_pred_train_samples, axis=0)
+    
+    # Calculate OUT-OF-SAMPLE predictions (test set)
+    y_pred_test_samples = []
+    for i in range(len(alpha_samples)):
+        pred_test = alpha_samples[i] + np.dot(X_test, beta_samples[i])
+        y_pred_test_samples.append(pred_test)
+    
+    y_pred_test_samples = np.array(y_pred_test_samples)
+    y_pred_test = np.mean(y_pred_test_samples, axis=0)
+    
+    # Calculate IN-SAMPLE metrics (training performance)
+    in_sample_r2 = r2_score(y_train, y_pred_train)
+    in_sample_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
+    
+    # Calculate OUT-OF-SAMPLE metrics (test performance)
+    out_sample_r2 = r2_score(y_test, y_pred_test)
+    out_sample_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
     
     # Store results
     cv_results['fold'].append(fold_idx + 1)
-    cv_results['r2_score'].append(r2)
-    cv_results['rmse'].append(rmse)
+    cv_results['in_sample_r2'].append(in_sample_r2)
+    cv_results['in_sample_rmse'].append(in_sample_rmse)
+    cv_results['out_sample_r2'].append(out_sample_r2)
+    cv_results['out_sample_rmse'].append(out_sample_rmse)
     cv_results['trace'].append(trace)
-    cv_results['y_true'].append(y_test)
-    cv_results['y_pred'].append(y_pred)
+    cv_results['y_train'].append(y_train)
+    cv_results['y_test'].append(y_test)
+    cv_results['y_pred_train'].append(y_pred_train)
+    cv_results['y_pred_test'].append(y_pred_test)
     
-    print(f"R-squared: {r2:.3f}")
-    print(f"RMSE: {rmse:.3f}")
+    print(f"In-Sample  -> R²: {in_sample_r2:.3f}, RMSE: {in_sample_rmse:.3f}")
+    print(f"Out-Sample -> R²: {out_sample_r2:.3f}, RMSE: {out_sample_rmse:.3f}")
+    print(f"Overfitting Check -> R² Diff: {in_sample_r2 - out_sample_r2:.3f}, RMSE Diff: {out_sample_rmse - in_sample_rmse:.3f}")
 
 # Step 5: Summary of cross-validation results
 print("\n" + "="*50)
 print("CROSS-VALIDATION SUMMARY")
 print("="*50)
 
-r2_scores = cv_results['r2_score']
-rmse_scores = cv_results['rmse']
+in_sample_r2_scores = cv_results['in_sample_r2']
+in_sample_rmse_scores = cv_results['in_sample_rmse']
+out_sample_r2_scores = cv_results['out_sample_r2']
+out_sample_rmse_scores = cv_results['out_sample_rmse']
 
-print(f"\nR-squared Statistics:")
-print(f"  Mean: {np.mean(r2_scores):.3f}")
-print(f"  Std:  {np.std(r2_scores):.3f}")
-print(f"  Min:  {np.min(r2_scores):.3f}")
-print(f"  Max:  {np.max(r2_scores):.3f}")
+print(f"\nIN-SAMPLE Performance Statistics:")
+print(f"  R-squared -> Mean: {np.mean(in_sample_r2_scores):.3f}, Std: {np.std(in_sample_r2_scores):.3f}, Min: {np.min(in_sample_r2_scores):.3f}, Max: {np.max(in_sample_r2_scores):.3f}")
+print(f"  RMSE      -> Mean: {np.mean(in_sample_rmse_scores):.3f}, Std: {np.std(in_sample_rmse_scores):.3f}, Min: {np.min(in_sample_rmse_scores):.3f}, Max: {np.max(in_sample_rmse_scores):.3f}")
 
-print(f"\nRMSE Statistics:")
-print(f"  Mean: {np.mean(rmse_scores):.3f}")
-print(f"  Std:  {np.std(rmse_scores):.3f}")
-print(f"  Min:  {np.min(rmse_scores):.3f}")
-print(f"  Max:  {np.max(rmse_scores):.3f}")
+print(f"\nOUT-OF-SAMPLE Performance Statistics:")
+print(f"  R-squared -> Mean: {np.mean(out_sample_r2_scores):.3f}, Std: {np.std(out_sample_r2_scores):.3f}, Min: {np.min(out_sample_r2_scores):.3f}, Max: {np.max(out_sample_r2_scores):.3f}")
+print(f"  RMSE      -> Mean: {np.mean(out_sample_rmse_scores):.3f}, Std: {np.std(out_sample_rmse_scores):.3f}, Min: {np.min(out_sample_rmse_scores):.3f}, Max: {np.max(out_sample_rmse_scores):.3f}")
+
+# Calculate overfitting metrics
+r2_diff = np.array(in_sample_r2_scores) - np.array(out_sample_r2_scores)
+rmse_diff = np.array(out_sample_rmse_scores) - np.array(in_sample_rmse_scores)
+
+print(f"\nOVERFITTING ANALYSIS:")
+print(f"  R² Difference (In-Sample - Out-Sample):")
+print(f"    Mean: {np.mean(r2_diff):.3f}, Std: {np.std(r2_diff):.3f}")
+print(f"    → Positive values indicate overfitting")
+print(f"  RMSE Difference (Out-Sample - In-Sample):")
+print(f"    Mean: {np.mean(rmse_diff):.3f}, Std: {np.std(rmse_diff):.3f}")
+print(f"    → Positive values indicate overfitting")
 
 print(f"\nDetailed Results by Fold:")
+print(f"{'Fold':<4} {'In-R²':<6} {'Out-R²':<7} {'R²-Diff':<7} {'In-RMSE':<8} {'Out-RMSE':<9} {'RMSE-Diff':<9}")
+print("-" * 60)
 for i in range(n_folds):
-    print(f"  Fold {i+1}: R² = {r2_scores[i]:.3f}, RMSE = {rmse_scores[i]:.3f}")
+    r2_diff_fold = in_sample_r2_scores[i] - out_sample_r2_scores[i]
+    rmse_diff_fold = out_sample_rmse_scores[i] - in_sample_rmse_scores[i]
+    print(f"{i+1:<4} {in_sample_r2_scores[i]:<6.3f} {out_sample_r2_scores[i]:<7.3f} {r2_diff_fold:<7.3f} {in_sample_rmse_scores[i]:<8.3f} {out_sample_rmse_scores[i]:<9.3f} {rmse_diff_fold:<9.3f}")
 
 # Step 6: Train final model on full dataset for coefficient analysis
 print("\n" + "="*50)
